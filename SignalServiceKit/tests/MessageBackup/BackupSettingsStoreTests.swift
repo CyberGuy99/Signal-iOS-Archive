@@ -126,6 +126,40 @@ class BackupSettingsStoreTests: XCTestCase {
             XCTFail("Unexpected error: \(error)")
         }
     }
+
+    func testMonthlyChunkPlannerGroupsByMonthDeterministically() {
+        let planner = MonthlyChatArchiveChunkPlanner()
+        let messages = [
+            ArchiveSourceMessage(messageId: "b", timestampMs: 1_704_067_200_000), // 2024-01-01
+            ArchiveSourceMessage(messageId: "a", timestampMs: 1_704_067_200_000), // same ts; sorted by id
+            ArchiveSourceMessage(messageId: "c", timestampMs: 1_706_745_600_000), // 2024-02-01
+        ]
+
+        let chunks = planner.planChunks(threadId: "thread123", messages: messages, maxMessagesPerChunk: nil)
+
+        XCTAssertEqual(chunks.count, 2)
+        XCTAssertEqual(chunks[0].chunkId, "thread123_2024_01")
+        XCTAssertEqual(chunks[0].messageCount, 2)
+        XCTAssertEqual(chunks[1].chunkId, "thread123_2024_02")
+        XCTAssertEqual(chunks[1].messageCount, 1)
+    }
+
+    func testMonthlyChunkPlannerSplitsByMessageLimit() {
+        let planner = MonthlyChatArchiveChunkPlanner()
+        let messages = [
+            ArchiveSourceMessage(messageId: "m1", timestampMs: 1_704_067_200_000),
+            ArchiveSourceMessage(messageId: "m2", timestampMs: 1_704_067_201_000),
+            ArchiveSourceMessage(messageId: "m3", timestampMs: 1_704_067_202_000),
+        ]
+
+        let chunks = planner.planChunks(threadId: "thread123", messages: messages, maxMessagesPerChunk: 2)
+
+        XCTAssertEqual(chunks.count, 2)
+        XCTAssertEqual(chunks[0].chunkId, "thread123_2024_01")
+        XCTAssertEqual(chunks[0].messageCount, 2)
+        XCTAssertEqual(chunks[1].chunkId, "thread123_2024_01_2")
+        XCTAssertEqual(chunks[1].messageCount, 1)
+    }
 }
 
 // MARK: -

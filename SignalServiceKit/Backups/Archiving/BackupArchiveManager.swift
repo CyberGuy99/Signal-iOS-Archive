@@ -112,6 +112,111 @@ public class ChatArchiveManagerImpl: ChatArchiveManager {
     }
 }
 
+public struct ArchiveSourceMessage: Equatable {
+    public let messageId: String
+    public let timestampMs: UInt64
+
+    public init(messageId: String, timestampMs: UInt64) {
+        self.messageId = messageId
+        self.timestampMs = timestampMs
+    }
+}
+
+public protocol ChatArchiveChunkPlanner {
+    func planChunks(
+        threadId: String,
+        messages: [ArchiveSourceMessage],
+        maxMessagesPerChunk: Int?,
+    ) -> [ArchiveChunk]
+}
+
+public struct MonthlyChatArchiveChunkPlanner: ChatArchiveChunkPlanner {
+    public init() {}
+
+    public func planChunks(
+        threadId: String,
+        messages: [ArchiveSourceMessage],
+        maxMessagesPerChunk: Int? = nil,
+    ) -> [ArchiveChunk] {
+        guard !messages.isEmpty else { return [] }
+
+        let sortedMessages = messages.sorted {
+            if $0.timestampMs == $1.timestampMs {
+                return $0.messageId < $1.messageId
+            }
+            return $0.timestampMs < $1.timestampMs
+        }
+
+        let safeLimit = max(maxMessagesPerChunk ?? Int.max, 1)
+
+        var result = [ArchiveChunk]()
+        var currentMonthKey: String?
+        var currentChunkMessages = [ArchiveSourceMessage]()
+        var monthPart = 1
+
+        func flushCurrentChunk() {
+            guard let monthKey = currentMonthKey, !currentChunkMessages.isEmpty else { return }
+            let chunkId = monthPart == 1
+                ? "\(threadId)_\(monthKey)"
+                : "\(threadId)_\(monthKey)_\(monthPart)"
+
+            let startTimestampMs = currentChunkMessages.first?.timestampMs ?? 0
+            let endTimestampMs = currentChunkMessages.last?.timestampMs ?? 0
+
+            result.append(
+                ArchiveChunk(
+                    chunkId: chunkId,
+                    threadId: threadId,
+                    startTimestampMs: startTimestampMs,
+                    endTimestampMs: endTimestampMs,
+                    messageCount: UInt32(currentChunkMessages.count)
+                )
+            )
+
+            currentChunkMessages.removeAll(keepingCapacity: true)
+            monthPart += 1
+        }
+
+        for message in sortedMessages {
+            let monthKey = Self.monthKey(timestampMs: message.timestampMs)
+
+            if currentMonthKey == nil {
+                currentMonthKey = monthKey
+            }
+
+            if currentMonthKey != monthKey {
+                flushCurrentChunk()
+                currentMonthKey = monthKey
+                monthPart = 1
+            }
+
+            currentChunkMessages.append(message)
+
+            if currentChunkMessages.count >= safeLimit {
+                flushCurrentChunk()
+            }
+        }
+
+        flushCurrentChunk()
+
+        return result
+    }
+
+    private static func monthKey(timestampMs: UInt64) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(timestampMs) / 1000)
+        return Self.monthFormatter.string(from: date)
+    }
+
+    private static let monthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy_MM"
+        return formatter
+    }()
+}
+
 public protocol BackupArchiveManager {
 
     // MARK: - Interact with remotes
