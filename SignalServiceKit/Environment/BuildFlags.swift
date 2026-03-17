@@ -90,6 +90,11 @@ public enum BuildFlags {
 
     public static let pollOneOnOneSend = build <= .internal
 
+    public enum ChatArchive {
+        // Compile-time gate for archive storage v2 scaffolding.
+        public static let storageLayerV2 = build <= .internal
+    }
+
     public enum AdminDelete {
         public static let receive = true
         public static let send = build <= .internal
@@ -135,6 +140,25 @@ extension BuildFlags {
             .compactMap { $0 }
             .joined(separator: " — ")
             .nilIfEmpty
+    }
+}
+
+// MARK: -
+
+public enum ChatArchiveFeatureFlags {
+    /// Canonical gate for all chat archive storage v2 entry points.
+    public static var isStorageLayerV2Enabled: Bool {
+        resolveIsStorageLayerV2Enabled(
+            compileTimeEnabled: BuildFlags.ChatArchive.storageLayerV2,
+            runtimeEnabled: DebugFlags.chatArchiveStorageV2.get(),
+        )
+    }
+
+    static func resolveIsStorageLayerV2Enabled(
+        compileTimeEnabled: Bool,
+        runtimeEnabled: Bool,
+    ) -> Bool {
+        compileTimeEnabled && runtimeEnabled
     }
 }
 
@@ -210,6 +234,12 @@ public enum DebugFlags {
         },
     )
 
+    public static let chatArchiveStorageV2 = TestableFlag(
+        false,
+        title: LocalizationNotNeeded("Chat Archive Storage V2"),
+        details: LocalizationNotNeeded("Enables local storage-layer archive scaffolding for chat history."),
+    )
+
     public static func allTestableFlags() -> [TestableFlag] {
         return [
             callingUseTestSFU,
@@ -218,6 +248,7 @@ public enum DebugFlags {
             callingForceVp9On,
             delayedMessageResend,
             fastPlaceholderExpiration,
+            chatArchiveStorageV2,
             messageSendsFail,
         ]
     }

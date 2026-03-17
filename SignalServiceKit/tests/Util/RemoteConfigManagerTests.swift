@@ -165,3 +165,35 @@ struct RemoteConfigStoreTests {
         #expect(valueFlags == nil)
     }
 }
+
+struct ChatArchiveFeatureFlagsTests {
+    @Test
+    func disabledWhenCompileTimeFlagIsOff() {
+        #expect(
+            ChatArchiveFeatureFlags.resolveIsStorageLayerV2Enabled(
+                compileTimeEnabled: false,
+                runtimeEnabled: true,
+            ) == false
+        )
+    }
+
+    @Test
+    func disabledWhenRuntimeFlagIsOff() {
+        #expect(
+            ChatArchiveFeatureFlags.resolveIsStorageLayerV2Enabled(
+                compileTimeEnabled: true,
+                runtimeEnabled: false,
+            ) == false
+        )
+    }
+
+    @Test
+    func enabledWhenBothFlagsAreOn() {
+        #expect(
+            ChatArchiveFeatureFlags.resolveIsStorageLayerV2Enabled(
+                compileTimeEnabled: true,
+                runtimeEnabled: true,
+            ) == true
+        )
+    }
+}
