@@ -11,10 +11,21 @@ import XCTest
 class BackupSettingsStoreTests: XCTestCase {
     private var db: InMemoryDB!
     private var backupSettingsStore = BackupSettingsStore()
+    private var tempDirectoryURL: URL!
 
     override func setUp() {
         super.setUp()
         db = InMemoryDB()
+        tempDirectoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ChatArchiveTests_\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDirectoryURL, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() {
+        if let tempDirectoryURL {
+            try? FileManager.default.removeItem(at: tempDirectoryURL)
+        }
+        super.tearDown()
     }
 
     func testLastAndFirstBackupDate() throws {
@@ -231,6 +242,38 @@ class BackupSettingsStoreTests: XCTestCase {
         let ciphertext = try encryptor.encrypt(payload, key: key)
 
         XCTAssertThrowsError(try encryptor.decrypt(ciphertext, key: wrongKey))
+    }
+
+    func testFileSystemRepositoryWriteReadDeleteFlow() throws {
+        let repository = FileSystemChatArchiveRepository(rootURL: tempDirectoryURL)
+        let payload = Data([0x01, 0x02, 0x03])
+
+        try repository.writeArchive(threadId: "thread123", chunkId: "thread123_2024_01", encryptedPayload: payload, overwrite: false)
+        let loaded = try repository.readArchive(threadId: "thread123", chunkId: "thread123_2024_01")
+        XCTAssertEqual(loaded, payload)
+
+        try repository.deleteArchive(threadId: "thread123", chunkId: "thread123_2024_01")
+        XCTAssertThrowsError(try repository.readArchive(threadId: "thread123", chunkId: "thread123_2024_01"))
+    }
+
+    func testFileSystemRepositoryRejectsOverwriteByDefault() throws {
+        let repository = FileSystemChatArchiveRepository(rootURL: tempDirectoryURL)
+        let payload = Data([0xAA])
+
+        try repository.writeArchive(threadId: "thread123", chunkId: "thread123_2024_01", encryptedPayload: payload, overwrite: false)
+
+        XCTAssertThrowsError(
+            try repository.writeArchive(threadId: "thread123", chunkId: "thread123_2024_01", encryptedPayload: payload, overwrite: false)
+        )
+    }
+
+    func testFileSystemRepositoryDetectsCorruptArchive() throws {
+        let repository = FileSystemChatArchiveRepository(rootURL: tempDirectoryURL)
+        let fileURL = repository.archiveURL(threadId: "thread123", chunkId: "thread123_2024_01")
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: fileURL)
+
+        XCTAssertThrowsError(try repository.readArchive(threadId: "thread123", chunkId: "thread123_2024_01"))
     }
 }
 

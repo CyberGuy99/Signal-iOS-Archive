@@ -390,6 +390,73 @@ public struct AESGCMChatArchiveEncryption: ChatArchiveEncryption {
     }
 }
 
+public enum ChatArchiveRepositoryError: Error, Equatable {
+    case archiveAlreadyExists
+    case archiveNotFound
+    case corruptArchive
+}
+
+public protocol ChatArchiveRepository {
+    func archiveURL(threadId: String, chunkId: String) -> URL
+    func writeArchive(threadId: String, chunkId: String, encryptedPayload: Data, overwrite: Bool) throws
+    func readArchive(threadId: String, chunkId: String) throws -> Data
+    func deleteArchive(threadId: String, chunkId: String) throws
+}
+
+public struct FileSystemChatArchiveRepository: ChatArchiveRepository {
+    private let rootURL: URL
+    private let fileManager: FileManager
+
+    public init(rootURL: URL, fileManager: FileManager = .default) {
+        self.rootURL = rootURL
+        self.fileManager = fileManager
+    }
+
+    public func archiveURL(threadId: String, chunkId: String) -> URL {
+        rootURL
+            .appendingPathComponent(threadId, isDirectory: true)
+            .appendingPathComponent("\(chunkId).arc", isDirectory: false)
+    }
+
+    public func writeArchive(
+        threadId: String,
+        chunkId: String,
+        encryptedPayload: Data,
+        overwrite: Bool = false,
+    ) throws {
+        let fileURL = archiveURL(threadId: threadId, chunkId: chunkId)
+
+        if fileManager.fileExists(atPath: fileURL.path), !overwrite {
+            throw ChatArchiveRepositoryError.archiveAlreadyExists
+        }
+
+        let directoryURL = fileURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        try encryptedPayload.write(to: fileURL, options: .atomic)
+    }
+
+    public func readArchive(threadId: String, chunkId: String) throws -> Data {
+        let fileURL = archiveURL(threadId: threadId, chunkId: chunkId)
+        guard fileManager.fileExists(atPath: fileURL.path) else {
+            throw ChatArchiveRepositoryError.archiveNotFound
+        }
+
+        let data = try Data(contentsOf: fileURL)
+        guard !data.isEmpty else {
+            throw ChatArchiveRepositoryError.corruptArchive
+        }
+        return data
+    }
+
+    public func deleteArchive(threadId: String, chunkId: String) throws {
+        let fileURL = archiveURL(threadId: threadId, chunkId: chunkId)
+        guard fileManager.fileExists(atPath: fileURL.path) else {
+            throw ChatArchiveRepositoryError.archiveNotFound
+        }
+        try fileManager.removeItem(at: fileURL)
+    }
+}
+
 public protocol BackupArchiveManager {
 
     // MARK: - Interact with remotes
