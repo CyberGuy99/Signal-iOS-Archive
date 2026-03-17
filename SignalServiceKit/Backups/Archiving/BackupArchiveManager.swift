@@ -103,7 +103,30 @@ public protocol ChatArchiveManager {
 }
 
 public class ChatArchiveManagerImpl: ChatArchiveManager {
-    public init() {}
+    private let planner: ChatArchiveChunkPlanner
+    private let compression: ChatArchiveCompression
+    private let encryption: ChatArchiveEncryption
+    private let keyProvider: ChatArchiveKeyProvider
+    private let repository: ChatArchiveRepository
+    private let indexStore: ChatArchiveIndexStore
+
+    public init(
+        planner: ChatArchiveChunkPlanner = MonthlyChatArchiveChunkPlanner(),
+        compression: ChatArchiveCompression = ZstdChatArchiveCompressionAdapter(),
+        encryption: ChatArchiveEncryption = AESGCMChatArchiveEncryption(),
+        keyProvider: ChatArchiveKeyProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x11, count: 32)),
+        repository: ChatArchiveRepository = FileSystemChatArchiveRepository(
+            rootURL: FileManager.default.temporaryDirectory.appendingPathComponent("chat-archive-v2", isDirectory: true)
+        ),
+        indexStore: ChatArchiveIndexStore = InMemoryChatArchiveIndexStore(),
+    ) {
+        self.planner = planner
+        self.compression = compression
+        self.encryption = encryption
+        self.keyProvider = keyProvider
+        self.repository = repository
+        self.indexStore = indexStore
+    }
 
     public func archiveOldMessages(threadId: String) async throws {
         throw ChatArchiveManagerError.unimplemented
@@ -111,6 +134,66 @@ public class ChatArchiveManagerImpl: ChatArchiveManager {
 
     public func loadArchivedChunk(chunkId: String) async throws -> [ArchiveChunk] {
         throw ChatArchiveManagerError.unimplemented
+    }
+
+    public func archivePreparedMessages(
+        threadId: String,
+        messages: [ArchiveSourceMessage],
+        maxMessagesPerChunk: Int? = 1000,
+        deleteHotRows: () throws -> Void,
+    ) throws {
+        let chunks = planner.planChunks(
+            threadId: threadId,
+            messages: messages,
+            maxMessagesPerChunk: maxMessagesPerChunk,
+        )
+
+        if chunks.isEmpty {
+            return
+        }
+
+        var written = [ArchiveChunk]()
+
+        do {
+            for chunk in chunks {
+                let serializedChunk = try JSONEncoder().encode(chunk)
+                let compressed = try compression.compress(data: serializedChunk, level: 3)
+                let key = keyProvider.archiveKey(for: chunk.chunkId)
+                let encrypted = try encryption.encrypt(compressed, key: key)
+
+                do {
+                    try repository.writeArchive(
+                        threadId: threadId,
+                        chunkId: chunk.chunkId,
+                        encryptedPayload: encrypted,
+                        overwrite: false,
+                    )
+                } catch let error as ChatArchiveRepositoryError where error == .archiveAlreadyExists {
+                    // Idempotent retry: existing archive is treated as already-written.
+                }
+
+                written.append(chunk)
+            }
+
+            try deleteHotRows()
+
+            for chunk in written {
+                indexStore.insert(
+                    ArchiveIndexEntry(
+                        threadId: chunk.threadId,
+                        chunkId: chunk.chunkId,
+                        startTimestampMs: chunk.startTimestampMs,
+                        endTimestampMs: chunk.endTimestampMs,
+                    )
+                )
+            }
+        } catch {
+            for chunk in written {
+                try? repository.deleteArchive(threadId: threadId, chunkId: chunk.chunkId)
+                indexStore.delete(threadId: threadId, chunkId: chunk.chunkId)
+            }
+            throw error
+        }
     }
 }
 

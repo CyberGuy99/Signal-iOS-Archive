@@ -315,6 +315,81 @@ class BackupSettingsStoreTests: XCTestCase {
         XCTAssertTrue(ChatArchiveIndexMigration.createTableSQL.contains("thread_id"))
         XCTAssertTrue(ChatArchiveIndexMigration.createRangeLookupIndexSQL.contains("archive_index_thread_range"))
     }
+
+    func testArchivalTransactionSuccessPath() throws {
+        let indexStore = InMemoryChatArchiveIndexStore()
+        let repository = FileSystemChatArchiveRepository(rootURL: tempDirectoryURL)
+        let manager = ChatArchiveManagerImpl(
+            repository: repository,
+            indexStore: indexStore,
+        )
+        let messages = [
+            ArchiveSourceMessage(messageId: "m1", timestampMs: 1_704_067_200_000),
+            ArchiveSourceMessage(messageId: "m2", timestampMs: 1_704_067_201_000),
+        ]
+
+        var deleteCalled = false
+        try manager.archivePreparedMessages(threadId: "thread123", messages: messages) {
+            deleteCalled = true
+        }
+
+        XCTAssertTrue(deleteCalled)
+        let indexed = indexStore.query(
+            threadId: "thread123",
+            from: 1_704_067_200_000,
+            to: 1_704_067_201_000
+        )
+        XCTAssertEqual(indexed.count, 1)
+    }
+
+    func testArchivalTransactionRollsBackOnDeleteFailure() {
+        let indexStore = InMemoryChatArchiveIndexStore()
+        let repository = FileSystemChatArchiveRepository(rootURL: tempDirectoryURL)
+        let manager = ChatArchiveManagerImpl(
+            repository: repository,
+            indexStore: indexStore,
+        )
+        let messages = [
+            ArchiveSourceMessage(messageId: "m1", timestampMs: 1_704_067_200_000),
+            ArchiveSourceMessage(messageId: "m2", timestampMs: 1_704_067_201_000),
+        ]
+
+        XCTAssertThrowsError(
+            try manager.archivePreparedMessages(threadId: "thread123", messages: messages) {
+                throw NSError(domain: "test", code: 1)
+            }
+        )
+
+        let indexed = indexStore.query(
+            threadId: "thread123",
+            from: 1_704_067_200_000,
+            to: 1_704_067_201_000
+        )
+        XCTAssertEqual(indexed.count, 0)
+    }
+
+    func testArchivalTransactionIsIdempotentOnRetry() throws {
+        let indexStore = InMemoryChatArchiveIndexStore()
+        let repository = FileSystemChatArchiveRepository(rootURL: tempDirectoryURL)
+        let manager = ChatArchiveManagerImpl(
+            repository: repository,
+            indexStore: indexStore,
+        )
+        let messages = [
+            ArchiveSourceMessage(messageId: "m1", timestampMs: 1_704_067_200_000),
+            ArchiveSourceMessage(messageId: "m2", timestampMs: 1_704_067_201_000),
+        ]
+
+        try manager.archivePreparedMessages(threadId: "thread123", messages: messages) {}
+        try manager.archivePreparedMessages(threadId: "thread123", messages: messages) {}
+
+        let indexed = indexStore.query(
+            threadId: "thread123",
+            from: 1_704_067_200_000,
+            to: 1_704_067_201_000
+        )
+        XCTAssertEqual(indexed.count, 1)
+    }
 }
 
 // MARK: -
