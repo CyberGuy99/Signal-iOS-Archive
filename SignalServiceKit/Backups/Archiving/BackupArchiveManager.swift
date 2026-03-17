@@ -91,6 +91,27 @@ public struct ArchiveStorageEnvelope: Codable, Equatable {
     }
 }
 
+public enum ChatArchiveManagerError: Error, Equatable {
+    case unimplemented
+}
+
+public protocol ChatArchiveManager {
+    func archiveOldMessages(threadId: String) async throws
+    func loadArchivedChunk(chunkId: String) async throws -> [ArchiveChunk]
+}
+
+public class ChatArchiveManagerImpl: ChatArchiveManager {
+    public init() {}
+
+    public func archiveOldMessages(threadId: String) async throws {
+        throw ChatArchiveManagerError.unimplemented
+    }
+
+    public func loadArchivedChunk(chunkId: String) async throws -> [ArchiveChunk] {
+        throw ChatArchiveManagerError.unimplemented
+    }
+}
+
 public protocol BackupArchiveManager {
 
     // MARK: - Interact with remotes

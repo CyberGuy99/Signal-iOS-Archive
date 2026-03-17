@@ -93,6 +93,7 @@ public class DependenciesBridge {
     public let callRecordStore: CallRecordStore
     public let changePhoneNumberPniManager: ChangePhoneNumberPniManager
     public let chatColorSettingStore: ChatColorSettingStore
+    public let chatArchiveManager: ChatArchiveManager
     public let chatConnectionManager: ChatConnectionManager
     public let contactShareManager: ContactShareManager
     public let cron: Cron
@@ -235,6 +236,7 @@ public class DependenciesBridge {
         callRecordStore: CallRecordStore,
         changePhoneNumberPniManager: ChangePhoneNumberPniManager,
         chatColorSettingStore: ChatColorSettingStore,
+        chatArchiveManager: ChatArchiveManager,
         chatConnectionManager: ChatConnectionManager,
         contactShareManager: ContactShareManager,
         cron: Cron,
@@ -376,6 +378,7 @@ public class DependenciesBridge {
         self.callRecordStore = callRecordStore
         self.changePhoneNumberPniManager = changePhoneNumberPniManager
         self.chatColorSettingStore = chatColorSettingStore
+        self.chatArchiveManager = chatArchiveManager
         self.chatConnectionManager = chatConnectionManager
         self.contactShareManager = contactShareManager
         self.cron = cron

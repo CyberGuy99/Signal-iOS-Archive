@@ -1657,6 +1657,8 @@ extension AppSetup.GlobalsContinuation {
             tsAccountManager: tsAccountManager,
         )
 
+        let chatArchiveManager = ChatArchiveManagerImpl()
+
         let dependenciesBridge = DependenciesBridge(
             accountAttributesUpdater: accountAttributesUpdater,
             accountEntropyPoolManager: accountEntropyPoolManager,
@@ -1705,6 +1707,7 @@ extension AppSetup.GlobalsContinuation {
             callRecordStore: callRecordStore,
             changePhoneNumberPniManager: changePhoneNumberPniManager,
             chatColorSettingStore: chatColorSettingStore,
+            chatArchiveManager: chatArchiveManager,
             chatConnectionManager: chatConnectionManager,
             contactShareManager: contactShareManager,
             cron: cron,

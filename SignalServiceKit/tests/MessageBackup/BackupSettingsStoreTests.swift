@@ -100,6 +100,32 @@ class BackupSettingsStoreTests: XCTestCase {
         XCTAssertEqual(decoded, value)
         XCTAssertEqual(decoded.schemaVersion, ArchiveStorageEnvelope.currentSchemaVersion)
     }
+
+    func testChatArchiveManagerSkeletonArchiveMethod() async {
+        let manager: ChatArchiveManager = ChatArchiveManagerImpl()
+
+        do {
+            try await manager.archiveOldMessages(threadId: "thread123")
+            XCTFail("Expected unimplemented error")
+        } catch let error as ChatArchiveManagerError {
+            XCTAssertEqual(error, .unimplemented)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testChatArchiveManagerSkeletonLoadMethod() async {
+        let manager: ChatArchiveManager = ChatArchiveManagerImpl()
+
+        do {
+            _ = try await manager.loadArchivedChunk(chunkId: "thread123_2024_01")
+            XCTFail("Expected unimplemented error")
+        } catch let error as ChatArchiveManagerError {
+            XCTAssertEqual(error, .unimplemented)
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
 }
 
 // MARK: -
