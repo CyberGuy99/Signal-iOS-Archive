@@ -52,6 +52,54 @@ class BackupSettingsStoreTests: XCTestCase {
         }
         XCTAssertNotEqual(lastBackupRefresh, .distantPast, "Last backup should be set")
     }
+
+    func testArchiveChunkContractRoundTrip() throws {
+        let value = ArchiveChunk(
+            chunkId: "thread123_2024_01",
+            threadId: "thread123",
+            startTimestampMs: 1_704_067_200_000,
+            endTimestampMs: 1_706_745_599_000,
+            messageCount: 1000,
+        )
+
+        let encoded = try JSONEncoder().encode(value)
+        let decoded = try JSONDecoder().decode(ArchiveChunk.self, from: encoded)
+
+        XCTAssertEqual(decoded, value)
+        XCTAssertEqual(decoded.schemaVersion, ArchiveChunk.currentSchemaVersion)
+    }
+
+    func testArchiveIndexEntryContractRoundTrip() throws {
+        let value = ArchiveIndexEntry(
+            threadId: "thread123",
+            chunkId: "thread123_2024_01",
+            startTimestampMs: 1_704_067_200_000,
+            endTimestampMs: 1_706_745_599_000,
+        )
+
+        let encoded = try JSONEncoder().encode(value)
+        let decoded = try JSONDecoder().decode(ArchiveIndexEntry.self, from: encoded)
+
+        XCTAssertEqual(decoded, value)
+        XCTAssertEqual(decoded.schemaVersion, ArchiveIndexEntry.currentSchemaVersion)
+    }
+
+    func testArchiveStorageEnvelopeContractRoundTrip() throws {
+        let chunk = ArchiveChunk(
+            chunkId: "thread123_2024_01",
+            threadId: "thread123",
+            startTimestampMs: 1_704_067_200_000,
+            endTimestampMs: 1_706_745_599_000,
+            messageCount: 1000,
+        )
+        let value = ArchiveStorageEnvelope(chunk: chunk, encryptedPayload: Data([0x01, 0x02, 0x03]))
+
+        let encoded = try JSONEncoder().encode(value)
+        let decoded = try JSONDecoder().decode(ArchiveStorageEnvelope.self, from: encoded)
+
+        XCTAssertEqual(decoded, value)
+        XCTAssertEqual(decoded.schemaVersion, ArchiveStorageEnvelope.currentSchemaVersion)
+    }
 }
 
 // MARK: -

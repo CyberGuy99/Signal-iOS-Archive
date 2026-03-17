@@ -20,6 +20,77 @@ public struct BackupCdnInfo {
     public let metadataHeader: BackupNonce.MetadataHeader
 }
 
+// MARK: - Chat Archive V2 Contracts
+
+public struct ArchiveChunk: Codable, Equatable {
+    public static let currentSchemaVersion: UInt8 = 1
+
+    public let schemaVersion: UInt8
+    public let chunkId: String
+    public let threadId: String
+    public let startTimestampMs: UInt64
+    public let endTimestampMs: UInt64
+    public let messageCount: UInt32
+
+    public init(
+        chunkId: String,
+        threadId: String,
+        startTimestampMs: UInt64,
+        endTimestampMs: UInt64,
+        messageCount: UInt32,
+        schemaVersion: UInt8 = ArchiveChunk.currentSchemaVersion,
+    ) {
+        self.schemaVersion = schemaVersion
+        self.chunkId = chunkId
+        self.threadId = threadId
+        self.startTimestampMs = startTimestampMs
+        self.endTimestampMs = endTimestampMs
+        self.messageCount = messageCount
+    }
+}
+
+public struct ArchiveIndexEntry: Codable, Equatable {
+    public static let currentSchemaVersion: UInt8 = 1
+
+    public let schemaVersion: UInt8
+    public let threadId: String
+    public let chunkId: String
+    public let startTimestampMs: UInt64
+    public let endTimestampMs: UInt64
+
+    public init(
+        threadId: String,
+        chunkId: String,
+        startTimestampMs: UInt64,
+        endTimestampMs: UInt64,
+        schemaVersion: UInt8 = ArchiveIndexEntry.currentSchemaVersion,
+    ) {
+        self.schemaVersion = schemaVersion
+        self.threadId = threadId
+        self.chunkId = chunkId
+        self.startTimestampMs = startTimestampMs
+        self.endTimestampMs = endTimestampMs
+    }
+}
+
+public struct ArchiveStorageEnvelope: Codable, Equatable {
+    public static let currentSchemaVersion: UInt8 = 1
+
+    public let schemaVersion: UInt8
+    public let chunk: ArchiveChunk
+    public let encryptedPayload: Data
+
+    public init(
+        chunk: ArchiveChunk,
+        encryptedPayload: Data,
+        schemaVersion: UInt8 = ArchiveStorageEnvelope.currentSchemaVersion,
+    ) {
+        self.schemaVersion = schemaVersion
+        self.chunk = chunk
+        self.encryptedPayload = encryptedPayload
+    }
+}
+
 public protocol BackupArchiveManager {
 
     // MARK: - Interact with remotes
