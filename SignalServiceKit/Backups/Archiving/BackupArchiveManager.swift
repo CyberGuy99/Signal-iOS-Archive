@@ -654,6 +654,45 @@ public final class ArchiveGapDetector {
     }
 }
 
+public protocol ChatArchiveLoader {
+    func loadChunk(threadId: String, chunkId: String) async throws -> ArchiveChunk
+}
+
+public struct ChatArchiveAsyncLoader: ChatArchiveLoader {
+    private let repository: ChatArchiveRepository
+    private let encryption: ChatArchiveEncryption
+    private let compression: ChatArchiveCompression
+    private let keyProvider: ChatArchiveKeyProvider
+
+    public init(
+        repository: ChatArchiveRepository,
+        encryption: ChatArchiveEncryption,
+        compression: ChatArchiveCompression,
+        keyProvider: ChatArchiveKeyProvider,
+    ) {
+        self.repository = repository
+        self.encryption = encryption
+        self.compression = compression
+        self.keyProvider = keyProvider
+    }
+
+    public func loadChunk(threadId: String, chunkId: String) async throws -> ArchiveChunk {
+        try Task.checkCancellation()
+
+        let encrypted = try repository.readArchive(threadId: threadId, chunkId: chunkId)
+        try Task.checkCancellation()
+
+        let key = keyProvider.archiveKey(for: chunkId)
+        let compressed = try encryption.decrypt(encrypted, key: key)
+        try Task.checkCancellation()
+
+        let serialized = try compression.decompress(data: compressed)
+        try Task.checkCancellation()
+
+        return try JSONDecoder().decode(ArchiveChunk.self, from: serialized)
+    }
+}
+
 public protocol BackupArchiveManager {
 
     // MARK: - Interact with remotes

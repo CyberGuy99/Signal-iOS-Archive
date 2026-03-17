@@ -419,6 +419,91 @@ class BackupSettingsStoreTests: XCTestCase {
         XCTAssertEqual(first, [ArchiveRange(startTimestampMs: 100, endTimestampMs: 120)])
         XCTAssertEqual(second, [])
     }
+
+    func testAsyncLoaderRoundTrip() async throws {
+        let repository = FileSystemChatArchiveRepository(rootURL: tempDirectoryURL)
+        let encryption = AESGCMChatArchiveEncryption()
+        let compression = ZstdChatArchiveCompressionAdapter()
+        let keyProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x21, count: 32))
+
+        let chunk = ArchiveChunk(
+            chunkId: "thread123_2024_01",
+            threadId: "thread123",
+            startTimestampMs: 1_704_067_200_000,
+            endTimestampMs: 1_706_745_599_000,
+            messageCount: 100
+        )
+        let serialized = try JSONEncoder().encode(chunk)
+        let compressed = try compression.compress(data: serialized, level: 3)
+        let encrypted = try encryption.encrypt(compressed, key: keyProvider.archiveKey(for: chunk.chunkId))
+        try repository.writeArchive(threadId: "thread123", chunkId: chunk.chunkId, encryptedPayload: encrypted, overwrite: false)
+
+        let loader = ChatArchiveAsyncLoader(
+            repository: repository,
+            encryption: encryption,
+            compression: compression,
+            keyProvider: keyProvider,
+        )
+
+        let loaded = try await loader.loadChunk(threadId: "thread123", chunkId: chunk.chunkId)
+        XCTAssertEqual(loaded, chunk)
+    }
+
+    func testAsyncLoaderFailsWithWrongKey() async throws {
+        let repository = FileSystemChatArchiveRepository(rootURL: tempDirectoryURL)
+        let encryption = AESGCMChatArchiveEncryption()
+        let compression = ZstdChatArchiveCompressionAdapter()
+        let goodKeyProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x22, count: 32))
+        let wrongKeyProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x23, count: 32))
+
+        let chunk = ArchiveChunk(
+            chunkId: "thread123_2024_01",
+            threadId: "thread123",
+            startTimestampMs: 1_704_067_200_000,
+            endTimestampMs: 1_706_745_599_000,
+            messageCount: 100
+        )
+        let serialized = try JSONEncoder().encode(chunk)
+        let compressed = try compression.compress(data: serialized, level: 3)
+        let encrypted = try encryption.encrypt(compressed, key: goodKeyProvider.archiveKey(for: chunk.chunkId))
+        try repository.writeArchive(threadId: "thread123", chunkId: chunk.chunkId, encryptedPayload: encrypted, overwrite: false)
+
+        let loader = ChatArchiveAsyncLoader(
+            repository: repository,
+            encryption: encryption,
+            compression: compression,
+            keyProvider: wrongKeyProvider,
+        )
+
+        do {
+            _ = try await loader.loadChunk(threadId: "thread123", chunkId: chunk.chunkId)
+            XCTFail("Expected loader to fail with wrong key")
+        } catch {
+            XCTAssertTrue(true)
+        }
+    }
+
+    func testAsyncLoaderHonorsCancellation() async throws {
+        let repository = FileSystemChatArchiveRepository(rootURL: tempDirectoryURL)
+        let loader = ChatArchiveAsyncLoader(
+            repository: repository,
+            encryption: AESGCMChatArchiveEncryption(),
+            compression: ZstdChatArchiveCompressionAdapter(),
+            keyProvider: DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x24, count: 32)),
+        )
+
+        let task = Task {
+            try await loader.loadChunk(threadId: "thread123", chunkId: "thread123_2024_01")
+        }
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation")
+        } catch {
+            XCTAssertTrue(true)
+        }
+    }
 }
 
 // MARK: -
