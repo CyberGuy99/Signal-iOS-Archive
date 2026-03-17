@@ -390,6 +390,35 @@ class BackupSettingsStoreTests: XCTestCase {
         )
         XCTAssertEqual(indexed.count, 1)
     }
+
+    func testArchiveGapDetectorFindsMissingRanges() {
+        let detector = ArchiveGapDetector()
+        let requested = ArchiveRange(startTimestampMs: 10, endTimestampMs: 30)
+        let available = [
+            ArchiveRange(startTimestampMs: 10, endTimestampMs: 14),
+            ArchiveRange(startTimestampMs: 20, endTimestampMs: 24),
+        ]
+
+        let gaps = detector.detectGaps(threadId: "thread123", requestedRange: requested, availableRanges: available)
+        XCTAssertEqual(
+            gaps,
+            [
+                ArchiveRange(startTimestampMs: 15, endTimestampMs: 19),
+                ArchiveRange(startTimestampMs: 25, endTimestampMs: 30),
+            ]
+        )
+    }
+
+    func testArchiveGapDetectorEmitsRangeOnce() {
+        let detector = ArchiveGapDetector()
+        let requested = ArchiveRange(startTimestampMs: 100, endTimestampMs: 120)
+
+        let first = detector.emitNewGaps(threadId: "thread123", requestedRange: requested, availableRanges: [])
+        let second = detector.emitNewGaps(threadId: "thread123", requestedRange: requested, availableRanges: [])
+
+        XCTAssertEqual(first, [ArchiveRange(startTimestampMs: 100, endTimestampMs: 120)])
+        XCTAssertEqual(second, [])
+    }
 }
 
 // MARK: -

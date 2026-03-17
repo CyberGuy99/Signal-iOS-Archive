@@ -593,6 +593,67 @@ public final class InMemoryChatArchiveIndexStore: ChatArchiveIndexStore {
     }
 }
 
+public struct ArchiveRange: Equatable, Hashable {
+    public let startTimestampMs: UInt64
+    public let endTimestampMs: UInt64
+
+    public init(startTimestampMs: UInt64, endTimestampMs: UInt64) {
+        self.startTimestampMs = startTimestampMs
+        self.endTimestampMs = endTimestampMs
+    }
+}
+
+public final class ArchiveGapDetector {
+    private var emittedGapKeys = Set<String>()
+
+    public init() {}
+
+    public func detectGaps(
+        threadId: String,
+        requestedRange: ArchiveRange,
+        availableRanges: [ArchiveRange],
+    ) -> [ArchiveRange] {
+        let normalizedAvailable = availableRanges
+            .filter { $0.endTimestampMs >= requestedRange.startTimestampMs && $0.startTimestampMs <= requestedRange.endTimestampMs }
+            .sorted { $0.startTimestampMs < $1.startTimestampMs }
+
+        var gaps = [ArchiveRange]()
+        var cursor = requestedRange.startTimestampMs
+
+        for range in normalizedAvailable {
+            let overlapStart = max(range.startTimestampMs, requestedRange.startTimestampMs)
+            let overlapEnd = min(range.endTimestampMs, requestedRange.endTimestampMs)
+            if overlapStart > cursor {
+                gaps.append(ArchiveRange(startTimestampMs: cursor, endTimestampMs: overlapStart - 1))
+            }
+            if overlapEnd == UInt64.max {
+                cursor = UInt64.max
+            } else {
+                cursor = max(cursor, overlapEnd + 1)
+            }
+            if cursor > requestedRange.endTimestampMs { break }
+        }
+
+        if cursor <= requestedRange.endTimestampMs {
+            gaps.append(ArchiveRange(startTimestampMs: cursor, endTimestampMs: requestedRange.endTimestampMs))
+        }
+
+        return gaps
+    }
+
+    public func emitNewGaps(
+        threadId: String,
+        requestedRange: ArchiveRange,
+        availableRanges: [ArchiveRange],
+    ) -> [ArchiveRange] {
+        let gaps = detectGaps(threadId: threadId, requestedRange: requestedRange, availableRanges: availableRanges)
+        return gaps.filter { gap in
+            let key = "\(threadId):\(gap.startTimestampMs)-\(gap.endTimestampMs)"
+            return emittedGapKeys.insert(key).inserted
+        }
+    }
+}
+
 public protocol BackupArchiveManager {
 
     // MARK: - Interact with remotes
