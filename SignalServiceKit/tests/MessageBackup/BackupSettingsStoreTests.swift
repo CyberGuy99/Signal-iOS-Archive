@@ -275,6 +275,46 @@ class BackupSettingsStoreTests: XCTestCase {
 
         XCTAssertThrowsError(try repository.readArchive(threadId: "thread123", chunkId: "thread123_2024_01"))
     }
+
+    func testArchiveIndexStoreInsertQueryDeleteFlow() {
+        let store = InMemoryChatArchiveIndexStore()
+        let jan = ArchiveIndexEntry(
+            threadId: "thread123",
+            chunkId: "thread123_2024_01",
+            startTimestampMs: 1_704_067_200_000,
+            endTimestampMs: 1_706_745_599_000,
+        )
+        let feb = ArchiveIndexEntry(
+            threadId: "thread123",
+            chunkId: "thread123_2024_02",
+            startTimestampMs: 1_706_745_600_000,
+            endTimestampMs: 1_709_251_199_000,
+        )
+
+        store.insert(jan)
+        store.insert(feb)
+
+        let januaryOnly = store.query(
+            threadId: "thread123",
+            from: 1_704_067_200_000,
+            to: 1_706_745_599_000
+        )
+        XCTAssertEqual(januaryOnly.map(\.chunkId), ["thread123_2024_01"])
+
+        store.delete(threadId: "thread123", chunkId: "thread123_2024_01")
+        let afterDelete = store.query(
+            threadId: "thread123",
+            from: 1_704_067_200_000,
+            to: 1_709_251_199_000
+        )
+        XCTAssertEqual(afterDelete.map(\.chunkId), ["thread123_2024_02"])
+    }
+
+    func testArchiveIndexMigrationSqlContainsExpectedArtifacts() {
+        XCTAssertTrue(ChatArchiveIndexMigration.createTableSQL.contains("archive_index"))
+        XCTAssertTrue(ChatArchiveIndexMigration.createTableSQL.contains("thread_id"))
+        XCTAssertTrue(ChatArchiveIndexMigration.createRangeLookupIndexSQL.contains("archive_index_thread_range"))
+    }
 }
 
 // MARK: -

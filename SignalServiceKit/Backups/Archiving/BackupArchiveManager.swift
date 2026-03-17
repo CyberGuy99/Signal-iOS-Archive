@@ -457,6 +457,59 @@ public struct FileSystemChatArchiveRepository: ChatArchiveRepository {
     }
 }
 
+public enum ChatArchiveIndexMigration {
+    public static let createTableSQL = """
+    CREATE TABLE IF NOT EXISTS archive_index (
+        thread_id TEXT NOT NULL,
+        chunk_id TEXT NOT NULL,
+        start_ts INTEGER NOT NULL,
+        end_ts INTEGER NOT NULL,
+        PRIMARY KEY (thread_id, chunk_id)
+    );
+    """
+
+    public static let createRangeLookupIndexSQL = """
+    CREATE INDEX IF NOT EXISTS archive_index_thread_range
+    ON archive_index (thread_id, start_ts, end_ts);
+    """
+}
+
+public protocol ChatArchiveIndexStore {
+    func insert(_ entry: ArchiveIndexEntry)
+    func delete(threadId: String, chunkId: String)
+    func query(threadId: String, from startTimestampMs: UInt64, to endTimestampMs: UInt64) -> [ArchiveIndexEntry]
+}
+
+public final class InMemoryChatArchiveIndexStore: ChatArchiveIndexStore {
+    private var entries = [ArchiveIndexEntry]()
+
+    public init() {}
+
+    public func insert(_ entry: ArchiveIndexEntry) {
+        entries.removeAll { $0.threadId == entry.threadId && $0.chunkId == entry.chunkId }
+        entries.append(entry)
+    }
+
+    public func delete(threadId: String, chunkId: String) {
+        entries.removeAll { $0.threadId == threadId && $0.chunkId == chunkId }
+    }
+
+    public func query(threadId: String, from startTimestampMs: UInt64, to endTimestampMs: UInt64) -> [ArchiveIndexEntry] {
+        entries
+            .filter { entry in
+                guard entry.threadId == threadId else { return false }
+                let overlaps = entry.startTimestampMs <= endTimestampMs && entry.endTimestampMs >= startTimestampMs
+                return overlaps
+            }
+            .sorted { lhs, rhs in
+                if lhs.startTimestampMs == rhs.startTimestampMs {
+                    return lhs.chunkId < rhs.chunkId
+                }
+                return lhs.startTimestampMs < rhs.startTimestampMs
+            }
+    }
+}
+
 public protocol BackupArchiveManager {
 
     // MARK: - Interact with remotes
