@@ -160,6 +160,40 @@ class BackupSettingsStoreTests: XCTestCase {
         XCTAssertEqual(chunks[1].chunkId, "thread123_2024_01_2")
         XCTAssertEqual(chunks[1].messageCount, 1)
     }
+
+    func testCompressionAdapterRoundTrip() throws {
+        let adapter = ZstdChatArchiveCompressionAdapter()
+        let payload = Data(repeating: 0x41, count: 64 * 1024)
+
+        let compressed = try adapter.compress(data: payload, level: 3)
+        let decompressed = try adapter.decompress(data: compressed)
+
+        XCTAssertEqual(decompressed, payload)
+        XCTAssertLessThan(compressed.count, payload.count)
+    }
+
+    func testCompressionAdapterCorruptionFailsDecompression() throws {
+        let adapter = ZstdChatArchiveCompressionAdapter()
+        let payload = Data(repeating: 0x42, count: 32 * 1024)
+        let compressed = try adapter.compress(data: payload, level: 3)
+        let corrupted = compressed.prefix(max(1, compressed.count / 4))
+
+        XCTAssertThrowsError(try adapter.decompress(data: Data(corrupted)))
+    }
+
+    func testCompressionAdapterBenchmarkProducesMetrics() {
+        let adapter = ZstdChatArchiveCompressionAdapter()
+        let payloads = [
+            Data(repeating: 0x41, count: 8 * 1024),
+            Data(repeating: 0x42, count: 32 * 1024),
+        ]
+
+        let results = adapter.benchmark(payloads: payloads, level: 3)
+
+        XCTAssertEqual(results.count, payloads.count)
+        XCTAssertTrue(results.allSatisfy { $0.originalBytes > 0 })
+        XCTAssertTrue(results.allSatisfy { $0.compressedBytes > 0 })
+    }
 }
 
 // MARK: -

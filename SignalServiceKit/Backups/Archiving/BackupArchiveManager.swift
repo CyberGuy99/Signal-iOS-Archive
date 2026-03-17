@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Compression
 public import LibSignalClient
 
 public enum BackupRestoreState: Int, Codable {
@@ -215,6 +216,125 @@ public struct MonthlyChatArchiveChunkPlanner: ChatArchiveChunkPlanner {
         formatter.dateFormat = "yyyy_MM"
         return formatter
     }()
+}
+
+public enum ChatArchiveCompressionError: Error, Equatable {
+    case compressionFailed
+    case decompressionFailed
+}
+
+public struct ArchiveCompressionBenchmark: Equatable {
+    public let originalBytes: Int
+    public let compressedBytes: Int
+    public let compressDurationMs: Double
+    public let decompressDurationMs: Double
+
+    public var compressionRatio: Double {
+        guard originalBytes > 0 else { return 0 }
+        return Double(compressedBytes) / Double(originalBytes)
+    }
+}
+
+public protocol ChatArchiveCompression {
+    func compress(data: Data, level: Int) throws -> Data
+    func decompress(data: Data) throws -> Data
+    func benchmark(payloads: [Data], level: Int) -> [ArchiveCompressionBenchmark]
+}
+
+/// Adapter API named for zstd integration. The current backend uses zlib via
+/// Apple's Compression framework and can be swapped to native zstd later
+/// without changing call sites.
+public struct ZstdChatArchiveCompressionAdapter: ChatArchiveCompression {
+    public init() {}
+
+    public func compress(data: Data, level: Int = 3) throws -> Data {
+        // `level` is reserved for native zstd tuning and ignored by this backend.
+        _ = level
+        guard !data.isEmpty else { return Data() }
+        return try Self.performCompression(data: data, operation: COMPRESSION_STREAM_ENCODE)
+    }
+
+    public func decompress(data: Data) throws -> Data {
+        guard !data.isEmpty else { return Data() }
+        return try Self.performCompression(data: data, operation: COMPRESSION_STREAM_DECODE)
+    }
+
+    public func benchmark(payloads: [Data], level: Int = 3) -> [ArchiveCompressionBenchmark] {
+        payloads.compactMap { payload in
+            let compressStart = Date()
+            guard let compressed = try? compress(data: payload, level: level) else {
+                return nil
+            }
+            let compressMs = Date().timeIntervalSince(compressStart) * 1000
+
+            let decompressStart = Date()
+            guard let decompressed = try? decompress(data: compressed), decompressed == payload else {
+                return nil
+            }
+            let decompressMs = Date().timeIntervalSince(decompressStart) * 1000
+
+            return ArchiveCompressionBenchmark(
+                originalBytes: payload.count,
+                compressedBytes: compressed.count,
+                compressDurationMs: compressMs,
+                decompressDurationMs: decompressMs
+            )
+        }
+    }
+
+    private static func performCompression(
+        data: Data,
+        operation: compression_stream_operation,
+    ) throws -> Data {
+        var stream = compression_stream()
+        var status = compression_stream_init(&stream, operation, COMPRESSION_ZLIB)
+        guard status != COMPRESSION_STATUS_ERROR else {
+            throw operation == COMPRESSION_STREAM_ENCODE
+                ? ChatArchiveCompressionError.compressionFailed
+                : ChatArchiveCompressionError.decompressionFailed
+        }
+        defer {
+            compression_stream_destroy(&stream)
+        }
+
+        let dstBufferSize = 64 * 1024
+        let dstBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: dstBufferSize)
+        defer {
+            dstBuffer.deallocate()
+        }
+
+        return try data.withUnsafeBytes { rawSourceBuffer in
+            guard let sourceBaseAddress = rawSourceBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return Data()
+            }
+
+            stream.src_ptr = sourceBaseAddress
+            stream.src_size = data.count
+
+            var output = Data()
+
+            repeat {
+                stream.dst_ptr = dstBuffer
+                stream.dst_size = dstBufferSize
+
+                status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
+
+                switch status {
+                case COMPRESSION_STATUS_OK, COMPRESSION_STATUS_END:
+                    let written = dstBufferSize - stream.dst_size
+                    if written > 0 {
+                        output.append(dstBuffer, count: written)
+                    }
+                default:
+                    throw operation == COMPRESSION_STREAM_ENCODE
+                        ? ChatArchiveCompressionError.compressionFailed
+                        : ChatArchiveCompressionError.decompressionFailed
+                }
+            } while status == COMPRESSION_STATUS_OK
+
+            return output
+        }
+    }
 }
 
 public protocol BackupArchiveManager {
