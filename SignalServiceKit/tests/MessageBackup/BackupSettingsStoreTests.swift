@@ -194,6 +194,44 @@ class BackupSettingsStoreTests: XCTestCase {
         XCTAssertTrue(results.allSatisfy { $0.originalBytes > 0 })
         XCTAssertTrue(results.allSatisfy { $0.compressedBytes > 0 })
     }
+
+    func testArchiveEncryptionRoundTrip() throws {
+        let encryptor = AESGCMChatArchiveEncryption()
+        let keyProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0xAA, count: 32))
+        let key = keyProvider.archiveKey(for: "thread123_2024_01")
+        let payload = Data("hello archive".utf8)
+
+        let ciphertext = try encryptor.encrypt(payload, key: key)
+        let plaintext = try encryptor.decrypt(ciphertext, key: key)
+
+        XCTAssertEqual(plaintext, payload)
+    }
+
+    func testArchiveEncryptionUsesFreshNoncePerEncryption() throws {
+        let encryptor = AESGCMChatArchiveEncryption()
+        let keyProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0xAB, count: 32))
+        let key = keyProvider.archiveKey(for: "thread123_2024_01")
+        let payload = Data("same payload".utf8)
+
+        let c1 = try encryptor.encrypt(payload, key: key)
+        let c2 = try encryptor.encrypt(payload, key: key)
+
+        XCTAssertNotEqual(c1, c2)
+    }
+
+    func testArchiveEncryptionFailsWithWrongKey() throws {
+        let encryptor = AESGCMChatArchiveEncryption()
+        let keyProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0xAC, count: 32))
+        let wrongKeyProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0xAD, count: 32))
+
+        let key = keyProvider.archiveKey(for: "thread123_2024_01")
+        let wrongKey = wrongKeyProvider.archiveKey(for: "thread123_2024_01")
+        let payload = Data("secret payload".utf8)
+
+        let ciphertext = try encryptor.encrypt(payload, key: key)
+
+        XCTAssertThrowsError(try encryptor.decrypt(ciphertext, key: wrongKey))
+    }
 }
 
 // MARK: -

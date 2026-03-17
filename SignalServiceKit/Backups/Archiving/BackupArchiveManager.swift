@@ -5,6 +5,7 @@
 
 import Foundation
 import Compression
+import CryptoKit
 public import LibSignalClient
 
 public enum BackupRestoreState: Int, Codable {
@@ -333,6 +334,58 @@ public struct ZstdChatArchiveCompressionAdapter: ChatArchiveCompression {
             } while status == COMPRESSION_STATUS_OK
 
             return output
+        }
+    }
+}
+
+public protocol ChatArchiveKeyProvider {
+    func archiveKey(for archiveIdentifier: String) -> SymmetricKey
+}
+
+public struct DeterministicChatArchiveKeyProvider: ChatArchiveKeyProvider {
+    private let rootKeyMaterial: Data
+
+    public init(rootKeyMaterial: Data) {
+        self.rootKeyMaterial = rootKeyMaterial
+    }
+
+    public func archiveKey(for archiveIdentifier: String) -> SymmetricKey {
+        var material = Data(archiveIdentifier.utf8)
+        material.append(rootKeyMaterial)
+        let digest = SHA256.hash(data: material)
+        return SymmetricKey(data: Data(digest))
+    }
+}
+
+public enum ChatArchiveEncryptionError: Error, Equatable {
+    case invalidCiphertext
+    case decryptionFailed
+}
+
+public protocol ChatArchiveEncryption {
+    func encrypt(_ plaintext: Data, key: SymmetricKey) throws -> Data
+    func decrypt(_ ciphertext: Data, key: SymmetricKey) throws -> Data
+}
+
+public struct AESGCMChatArchiveEncryption: ChatArchiveEncryption {
+    public init() {}
+
+    public func encrypt(_ plaintext: Data, key: SymmetricKey) throws -> Data {
+        let sealed = try AES.GCM.seal(plaintext, using: key)
+
+        guard let combined = sealed.combined else {
+            throw ChatArchiveEncryptionError.invalidCiphertext
+        }
+
+        return combined
+    }
+
+    public func decrypt(_ ciphertext: Data, key: SymmetricKey) throws -> Data {
+        do {
+            let sealed = try AES.GCM.SealedBox(combined: ciphertext)
+            return try AES.GCM.open(sealed, using: key)
+        } catch {
+            throw ChatArchiveEncryptionError.decryptionFailed
         }
     }
 }
