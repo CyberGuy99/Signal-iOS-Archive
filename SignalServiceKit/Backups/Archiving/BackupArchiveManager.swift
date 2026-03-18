@@ -693,6 +693,31 @@ public struct ChatArchiveAsyncLoader: ChatArchiveLoader {
     }
 }
 
+public struct ChatArchiveTimelineMerger {
+    public init() {}
+
+    public func merge(
+        hotMessages: [ArchiveSourceMessage],
+        archivedMessages: [ArchiveSourceMessage],
+    ) -> [ArchiveSourceMessage] {
+        var byId = [String: ArchiveSourceMessage]()
+
+        for message in archivedMessages {
+            byId[message.messageId] = message
+        }
+        for message in hotMessages {
+            byId[message.messageId] = message
+        }
+
+        return byId.values.sorted {
+            if $0.timestampMs == $1.timestampMs {
+                return $0.messageId < $1.messageId
+            }
+            return $0.timestampMs < $1.timestampMs
+        }
+    }
+}
+
 public protocol BackupArchiveManager {
 
     // MARK: - Interact with remotes

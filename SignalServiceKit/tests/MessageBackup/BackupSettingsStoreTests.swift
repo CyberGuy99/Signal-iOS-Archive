@@ -504,6 +504,39 @@ class BackupSettingsStoreTests: XCTestCase {
             XCTAssertTrue(true)
         }
     }
+
+    func testTimelineMergerOrdersMessagesChronologically() {
+        let merger = ChatArchiveTimelineMerger()
+        let archived = [
+            ArchiveSourceMessage(messageId: "a1", timestampMs: 1000),
+            ArchiveSourceMessage(messageId: "a2", timestampMs: 1500),
+        ]
+        let hot = [
+            ArchiveSourceMessage(messageId: "h1", timestampMs: 1200),
+            ArchiveSourceMessage(messageId: "h2", timestampMs: 1800),
+        ]
+
+        let merged = merger.merge(hotMessages: hot, archivedMessages: archived)
+
+        XCTAssertEqual(merged.map(\.messageId), ["a1", "h1", "a2", "h2"])
+    }
+
+    func testTimelineMergerDeduplicatesByMessageIdPreferringHotMessage() {
+        let merger = ChatArchiveTimelineMerger()
+        let archived = [
+            ArchiveSourceMessage(messageId: "shared", timestampMs: 1000),
+            ArchiveSourceMessage(messageId: "archivedOnly", timestampMs: 900),
+        ]
+        let hot = [
+            ArchiveSourceMessage(messageId: "shared", timestampMs: 1100),
+            ArchiveSourceMessage(messageId: "hotOnly", timestampMs: 1200),
+        ]
+
+        let merged = merger.merge(hotMessages: hot, archivedMessages: archived)
+
+        XCTAssertEqual(merged.map(\.messageId), ["archivedOnly", "shared", "hotOnly"])
+        XCTAssertEqual(merged.first(where: { $0.messageId == "shared" })?.timestampMs, 1100)
+    }
 }
 
 // MARK: -
