@@ -718,6 +718,99 @@ public struct ChatArchiveTimelineMerger {
     }
 }
 
+public struct ChatArchiveSchedulerConditions: Equatable {
+    public let isAppIdle: Bool
+    public let isCharging: Bool
+    public let isLowCpuUsage: Bool
+
+    public init(isAppIdle: Bool, isCharging: Bool, isLowCpuUsage: Bool) {
+        self.isAppIdle = isAppIdle
+        self.isCharging = isCharging
+        self.isLowCpuUsage = isLowCpuUsage
+    }
+}
+
+public enum ChatArchiveSchedulerSkipReason: Equatable {
+    case appNotIdle
+    case notCharging
+    case cpuTooBusy
+}
+
+public enum ChatArchiveSchedulerRunResult: Equatable {
+    case started
+    case skipped(ChatArchiveSchedulerSkipReason)
+    case aborted
+}
+
+public struct ChatArchiveSchedulerTelemetry: Equatable {
+    public var lastRunStartAt: Date?
+    public var lastRunFinishAt: Date?
+    public var lastResult: ChatArchiveSchedulerRunResult?
+
+    public init(lastRunStartAt: Date? = nil, lastRunFinishAt: Date? = nil, lastResult: ChatArchiveSchedulerRunResult? = nil) {
+        self.lastRunStartAt = lastRunStartAt
+        self.lastRunFinishAt = lastRunFinishAt
+        self.lastResult = lastResult
+    }
+}
+
+public actor ChatArchiveBackgroundScheduler {
+    private(set) var telemetry = ChatArchiveSchedulerTelemetry()
+    private var shouldAbort = false
+
+    public init() {}
+
+    public func canRun(conditions: ChatArchiveSchedulerConditions) -> ChatArchiveSchedulerRunResult {
+        if !conditions.isAppIdle {
+            return .skipped(.appNotIdle)
+        }
+        if !conditions.isCharging {
+            return .skipped(.notCharging)
+        }
+        if !conditions.isLowCpuUsage {
+            return .skipped(.cpuTooBusy)
+        }
+        return .started
+    }
+
+    public func requestAbort() {
+        shouldAbort = true
+    }
+
+    public func runIfEligible(
+        conditions: ChatArchiveSchedulerConditions,
+        job: () async throws -> Void,
+    ) async rethrows -> ChatArchiveSchedulerRunResult {
+        let eligibility = canRun(conditions: conditions)
+        guard eligibility == .started else {
+            telemetry.lastResult = eligibility
+            return eligibility
+        }
+
+        telemetry.lastRunStartAt = Date()
+
+        if shouldAbort {
+            shouldAbort = false
+            telemetry.lastRunFinishAt = Date()
+            telemetry.lastResult = .aborted
+            return .aborted
+        }
+
+        try await job()
+
+        if shouldAbort {
+            shouldAbort = false
+            telemetry.lastRunFinishAt = Date()
+            telemetry.lastResult = .aborted
+            return .aborted
+        }
+
+        telemetry.lastRunFinishAt = Date()
+        telemetry.lastResult = .started
+        return .started
+    }
+}
+
 public protocol BackupArchiveManager {
 
     // MARK: - Interact with remotes

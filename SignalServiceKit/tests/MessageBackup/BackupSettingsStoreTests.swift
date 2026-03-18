@@ -537,6 +537,61 @@ class BackupSettingsStoreTests: XCTestCase {
         XCTAssertEqual(merged.map(\.messageId), ["archivedOnly", "shared", "hotOnly"])
         XCTAssertEqual(merged.first(where: { $0.messageId == "shared" })?.timestampMs, 1100)
     }
+
+    func testSchedulerSkipsWhenNotEligible() async {
+        let scheduler = ChatArchiveBackgroundScheduler()
+
+        let notIdle = await scheduler.canRun(
+            conditions: ChatArchiveSchedulerConditions(isAppIdle: false, isCharging: true, isLowCpuUsage: true)
+        )
+        XCTAssertEqual(notIdle, .skipped(.appNotIdle))
+
+        let notCharging = await scheduler.canRun(
+            conditions: ChatArchiveSchedulerConditions(isAppIdle: true, isCharging: false, isLowCpuUsage: true)
+        )
+        XCTAssertEqual(notCharging, .skipped(.notCharging))
+
+        let highCpu = await scheduler.canRun(
+            conditions: ChatArchiveSchedulerConditions(isAppIdle: true, isCharging: true, isLowCpuUsage: false)
+        )
+        XCTAssertEqual(highCpu, .skipped(.cpuTooBusy))
+    }
+
+    func testSchedulerRunsWhenEligibleAndRecordsTelemetry() async throws {
+        let scheduler = ChatArchiveBackgroundScheduler()
+        var didRun = false
+
+        let result = try await scheduler.runIfEligible(
+            conditions: ChatArchiveSchedulerConditions(isAppIdle: true, isCharging: true, isLowCpuUsage: true),
+            job: {
+                didRun = true
+            }
+        )
+
+        XCTAssertEqual(result, .started)
+        XCTAssertTrue(didRun)
+
+        let telemetry = await scheduler.telemetry
+        XCTAssertNotNil(telemetry.lastRunStartAt)
+        XCTAssertNotNil(telemetry.lastRunFinishAt)
+        XCTAssertEqual(telemetry.lastResult, .started)
+    }
+
+    func testSchedulerAbortFlow() async throws {
+        let scheduler = ChatArchiveBackgroundScheduler()
+        await scheduler.requestAbort()
+
+        let result = try await scheduler.runIfEligible(
+            conditions: ChatArchiveSchedulerConditions(isAppIdle: true, isCharging: true, isLowCpuUsage: true),
+            job: {
+                XCTFail("Job should not run when scheduler abort is requested")
+            }
+        )
+
+        XCTAssertEqual(result, .aborted)
+        let telemetry = await scheduler.telemetry
+        XCTAssertEqual(telemetry.lastResult, .aborted)
+    }
 }
 
 // MARK: -
