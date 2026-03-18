@@ -447,6 +447,70 @@ public struct ChatArchiveSecurityValidator {
     }
 }
 
+public enum ChatArchiveLoadingState: Equatable {
+    case idle
+    case loading
+    case loaded
+    case failed(message: String, canRetry: Bool)
+}
+
+public struct ChatArchiveLoadingViewModel: Equatable {
+    public let showLoadingIndicator: Bool
+    public let showRetryAction: Bool
+    public let errorMessage: String?
+
+    public init(showLoadingIndicator: Bool, showRetryAction: Bool, errorMessage: String?) {
+        self.showLoadingIndicator = showLoadingIndicator
+        self.showRetryAction = showRetryAction
+        self.errorMessage = errorMessage
+    }
+}
+
+public final class ChatArchiveLoadingStateMachine {
+    public private(set) var state: ChatArchiveLoadingState = .idle
+
+    public init() {}
+
+    public func beginLoading() {
+        state = .loading
+    }
+
+    public func completeLoading() {
+        state = .loaded
+    }
+
+    public func failLoading(message: String, canRetry: Bool) {
+        state = .failed(message: message, canRetry: canRetry)
+    }
+
+    public func reset() {
+        state = .idle
+    }
+
+    public var viewModel: ChatArchiveLoadingViewModel {
+        switch state {
+        case .idle, .loaded:
+            return ChatArchiveLoadingViewModel(
+                showLoadingIndicator: false,
+                showRetryAction: false,
+                errorMessage: nil,
+            )
+        case .loading:
+            return ChatArchiveLoadingViewModel(
+                showLoadingIndicator: true,
+                showRetryAction: false,
+                errorMessage: nil,
+            )
+        case .failed(let message, let canRetry):
+            return ChatArchiveLoadingViewModel(
+                showLoadingIndicator: false,
+                showRetryAction: canRetry,
+                errorMessage: message,
+            )
+        }
+    }
+}
+
 public protocol ChatArchiveChunkPlanner {
     func planChunks(
         threadId: String,

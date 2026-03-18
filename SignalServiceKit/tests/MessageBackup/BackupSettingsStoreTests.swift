@@ -767,6 +767,32 @@ class BackupSettingsStoreTests: XCTestCase {
         XCTAssertTrue(checklist.noPlaintextAtRest)
         XCTAssertTrue(checklist.isComplete)
     }
+
+    func testLoadingStateMachineLoadingAndSuccessStates() {
+        let stateMachine = ChatArchiveLoadingStateMachine()
+        XCTAssertEqual(stateMachine.state, .idle)
+
+        stateMachine.beginLoading()
+        XCTAssertEqual(stateMachine.state, .loading)
+        XCTAssertTrue(stateMachine.viewModel.showLoadingIndicator)
+
+        stateMachine.completeLoading()
+        XCTAssertEqual(stateMachine.state, .loaded)
+        XCTAssertFalse(stateMachine.viewModel.showLoadingIndicator)
+    }
+
+    func testLoadingStateMachineFailureAndRetryVisibility() {
+        let stateMachine = ChatArchiveLoadingStateMachine()
+
+        stateMachine.failLoading(message: "Failed to load archive", canRetry: true)
+        XCTAssertEqual(stateMachine.state, .failed(message: "Failed to load archive", canRetry: true))
+        XCTAssertEqual(stateMachine.viewModel.errorMessage, "Failed to load archive")
+        XCTAssertTrue(stateMachine.viewModel.showRetryAction)
+
+        stateMachine.reset()
+        XCTAssertEqual(stateMachine.state, .idle)
+        XCTAssertNil(stateMachine.viewModel.errorMessage)
+    }
 }
 
 // MARK: -
