@@ -291,6 +291,114 @@ public struct ChatArchiveParityHarness {
     }
 }
 
+public struct ChatArchivePerformanceMetric: Equatable {
+    public let chunkId: String
+    public let originalBytes: Int
+    public let compressedBytes: Int
+    public let compressionRatio: Double
+    public let decompressDurationMs: Double
+
+    public init(
+        chunkId: String,
+        originalBytes: Int,
+        compressedBytes: Int,
+        compressionRatio: Double,
+        decompressDurationMs: Double,
+    ) {
+        self.chunkId = chunkId
+        self.originalBytes = originalBytes
+        self.compressedBytes = compressedBytes
+        self.compressionRatio = compressionRatio
+        self.decompressDurationMs = decompressDurationMs
+    }
+}
+
+public struct ChatArchiveBenchmarkReport: Equatable {
+    public let metrics: [ChatArchivePerformanceMetric]
+
+    public var averageCompressionRatio: Double {
+        guard !metrics.isEmpty else { return 0 }
+        return metrics.map(\.compressionRatio).reduce(0, +) / Double(metrics.count)
+    }
+
+    public var averageDecompressDurationMs: Double {
+        guard !metrics.isEmpty else { return 0 }
+        return metrics.map(\.decompressDurationMs).reduce(0, +) / Double(metrics.count)
+    }
+
+    public func toMarkdown() -> String {
+        var lines = [
+            "| chunk_id | original_bytes | compressed_bytes | compression_ratio | decompress_ms |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ]
+        for metric in metrics {
+            lines.append("| \(metric.chunkId) | \(metric.originalBytes) | \(metric.compressedBytes) | \(String(format: \"%.4f\", metric.compressionRatio)) | \(String(format: \"%.3f\", metric.decompressDurationMs)) |")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    public func toCSV() -> String {
+        var lines = ["chunk_id,original_bytes,compressed_bytes,compression_ratio,decompress_ms"]
+        for metric in metrics {
+            lines.append("\(metric.chunkId),\(metric.originalBytes),\(metric.compressedBytes),\(metric.compressionRatio),\(metric.decompressDurationMs)")
+        }
+        return lines.joined(separator: "\n")
+    }
+}
+
+public struct ChatArchiveBenchmarkSuite {
+    private let planner: ChatArchiveChunkPlanner
+    private let compression: ChatArchiveCompression
+
+    public init(
+        planner: ChatArchiveChunkPlanner = MonthlyChatArchiveChunkPlanner(),
+        compression: ChatArchiveCompression = ZstdChatArchiveCompressionAdapter(),
+    ) {
+        self.planner = planner
+        self.compression = compression
+    }
+
+    public func run(
+        threadId: String,
+        messages: [ArchiveSourceMessage],
+        maxMessagesPerChunk: Int? = 1000,
+    ) throws -> ChatArchiveBenchmarkReport {
+        let chunks = planner.planChunks(threadId: threadId, messages: messages, maxMessagesPerChunk: maxMessagesPerChunk)
+        var metrics = [ChatArchivePerformanceMetric]()
+
+        for chunk in chunks {
+            let chunkMessages = messages
+                .filter { $0.timestampMs >= chunk.startTimestampMs && $0.timestampMs <= chunk.endTimestampMs }
+                .sorted {
+                    if $0.timestampMs == $1.timestampMs {
+                        return $0.messageId < $1.messageId
+                    }
+                    return $0.timestampMs < $1.timestampMs
+                }
+            let payload = ArchiveSourceMessagePayload(messages: chunkMessages)
+            let raw = try JSONEncoder().encode(payload)
+            let compressed = try compression.compress(data: raw, level: 3)
+
+            let start = Date()
+            _ = try compression.decompress(data: compressed)
+            let decompressMs = Date().timeIntervalSince(start) * 1000
+
+            let ratio = raw.isEmpty ? 0 : Double(compressed.count) / Double(raw.count)
+            metrics.append(
+                ChatArchivePerformanceMetric(
+                    chunkId: chunk.chunkId,
+                    originalBytes: raw.count,
+                    compressedBytes: compressed.count,
+                    compressionRatio: ratio,
+                    decompressDurationMs: decompressMs,
+                )
+            )
+        }
+
+        return ChatArchiveBenchmarkReport(metrics: metrics)
+    }
+}
+
 public protocol ChatArchiveChunkPlanner {
     func planChunks(
         threadId: String,

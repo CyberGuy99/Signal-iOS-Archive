@@ -699,6 +699,41 @@ class BackupSettingsStoreTests: XCTestCase {
 
         XCTAssertThrowsError(try badHarness.restore(archivedPayloadsByChunkId: archived))
     }
+
+    func testBenchmarkSuiteProducesMetrics() throws {
+        let suite = ChatArchiveBenchmarkSuite()
+        let messages = [
+            ArchiveSourceMessage(messageId: "m1", timestampMs: 1_704_067_200_000, text: "hello"),
+            ArchiveSourceMessage(messageId: "m2", timestampMs: 1_704_067_201_000, text: "world"),
+            ArchiveSourceMessage(messageId: "m3", timestampMs: 1_706_745_600_000, text: "more data"),
+        ]
+
+        let report = try suite.run(threadId: "thread123", messages: messages, maxMessagesPerChunk: 2)
+
+        XCTAssertFalse(report.metrics.isEmpty)
+        XCTAssertTrue(report.metrics.allSatisfy { $0.originalBytes > 0 })
+        XCTAssertTrue(report.metrics.allSatisfy { $0.compressedBytes > 0 })
+    }
+
+    func testBenchmarkReportFormats() {
+        let report = ChatArchiveBenchmarkReport(metrics: [
+            ChatArchivePerformanceMetric(
+                chunkId: "thread123_2024_01",
+                originalBytes: 1000,
+                compressedBytes: 500,
+                compressionRatio: 0.5,
+                decompressDurationMs: 12.3,
+            )
+        ])
+
+        let markdown = report.toMarkdown()
+        let csv = report.toCSV()
+
+        XCTAssertTrue(markdown.contains("chunk_id"))
+        XCTAssertTrue(markdown.contains("thread123_2024_01"))
+        XCTAssertTrue(csv.contains("chunk_id,original_bytes,compressed_bytes"))
+        XCTAssertTrue(csv.contains("thread123_2024_01,1000,500"))
+    }
 }
 
 // MARK: -
