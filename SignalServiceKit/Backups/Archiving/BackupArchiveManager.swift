@@ -734,6 +734,7 @@ public enum ChatArchiveSchedulerSkipReason: Equatable {
     case appNotIdle
     case notCharging
     case cpuTooBusy
+    case throttled
 }
 
 public enum ChatArchiveSchedulerRunResult: Equatable {
@@ -746,19 +747,105 @@ public struct ChatArchiveSchedulerTelemetry: Equatable {
     public var lastRunStartAt: Date?
     public var lastRunFinishAt: Date?
     public var lastResult: ChatArchiveSchedulerRunResult?
+    public var retryCount: Int
+    public var lastFailureReason: String?
 
-    public init(lastRunStartAt: Date? = nil, lastRunFinishAt: Date? = nil, lastResult: ChatArchiveSchedulerRunResult? = nil) {
+    public init(
+        lastRunStartAt: Date? = nil,
+        lastRunFinishAt: Date? = nil,
+        lastResult: ChatArchiveSchedulerRunResult? = nil,
+        retryCount: Int = 0,
+        lastFailureReason: String? = nil,
+    ) {
         self.lastRunStartAt = lastRunStartAt
         self.lastRunFinishAt = lastRunFinishAt
         self.lastResult = lastResult
+        self.retryCount = retryCount
+        self.lastFailureReason = lastFailureReason
+    }
+}
+
+public struct ChatArchiveThrottlePolicy: Equatable {
+    public let maxRunsPerWindow: Int
+    public let windowDuration: TimeInterval
+    public let baseBackoff: TimeInterval
+    public let maxBackoff: TimeInterval
+
+    public init(
+        maxRunsPerWindow: Int,
+        windowDuration: TimeInterval,
+        baseBackoff: TimeInterval,
+        maxBackoff: TimeInterval,
+    ) {
+        self.maxRunsPerWindow = max(1, maxRunsPerWindow)
+        self.windowDuration = max(1, windowDuration)
+        self.baseBackoff = max(0.1, baseBackoff)
+        self.maxBackoff = max(self.baseBackoff, maxBackoff)
+    }
+
+    public static let `default` = ChatArchiveThrottlePolicy(
+        maxRunsPerWindow: 3,
+        windowDuration: 60 * 60,
+        baseBackoff: 30,
+        maxBackoff: 15 * 60,
+    )
+}
+
+public actor ChatArchiveRunThrottleStore {
+    private let policy: ChatArchiveThrottlePolicy
+    private var recentRunStarts = [Date]()
+    private var retryCountInternal = 0
+    private var nextAllowedAt: Date?
+    private var lastFailureReason: String?
+
+    public init(policy: ChatArchiveThrottlePolicy = .default) {
+        self.policy = policy
+    }
+
+    public func shouldAllowRun(now: Date = Date()) -> Bool {
+        prune(now: now)
+        if let nextAllowedAt, now < nextAllowedAt {
+            return false
+        }
+        return recentRunStarts.count < policy.maxRunsPerWindow
+    }
+
+    public func registerRunStart(now: Date = Date()) {
+        prune(now: now)
+        recentRunStarts.append(now)
+    }
+
+    public func registerSuccess() {
+        retryCountInternal = 0
+        nextAllowedAt = nil
+        lastFailureReason = nil
+    }
+
+    public func registerFailure(reason: String, now: Date = Date()) {
+        retryCountInternal += 1
+        let factor = pow(2.0, Double(max(0, retryCountInternal - 1)))
+        let backoff = min(policy.maxBackoff, policy.baseBackoff * factor)
+        nextAllowedAt = now.addingTimeInterval(backoff)
+        lastFailureReason = reason
+    }
+
+    public var retryCount: Int { retryCountInternal }
+    public var failureReason: String? { lastFailureReason }
+
+    private func prune(now: Date) {
+        let floor = now.addingTimeInterval(-policy.windowDuration)
+        recentRunStarts.removeAll { $0 < floor }
     }
 }
 
 public actor ChatArchiveBackgroundScheduler {
     private(set) var telemetry = ChatArchiveSchedulerTelemetry()
     private var shouldAbort = false
+    private let throttleStore: ChatArchiveRunThrottleStore
 
-    public init() {}
+    public init(throttleStore: ChatArchiveRunThrottleStore = ChatArchiveRunThrottleStore()) {
+        self.throttleStore = throttleStore
+    }
 
     public func canRun(conditions: ChatArchiveSchedulerConditions) -> ChatArchiveSchedulerRunResult {
         if !conditions.isAppIdle {
@@ -780,12 +867,19 @@ public actor ChatArchiveBackgroundScheduler {
     public func runIfEligible(
         conditions: ChatArchiveSchedulerConditions,
         job: () async throws -> Void,
-    ) async rethrows -> ChatArchiveSchedulerRunResult {
+    ) async throws -> ChatArchiveSchedulerRunResult {
         let eligibility = canRun(conditions: conditions)
         guard eligibility == .started else {
             telemetry.lastResult = eligibility
             return eligibility
         }
+
+        if await !throttleStore.shouldAllowRun() {
+            telemetry.lastResult = .skipped(.throttled)
+            return .skipped(.throttled)
+        }
+
+        await throttleStore.registerRunStart()
 
         telemetry.lastRunStartAt = Date()
 
@@ -796,7 +890,15 @@ public actor ChatArchiveBackgroundScheduler {
             return .aborted
         }
 
-        try await job()
+        do {
+            try await job()
+            await throttleStore.registerSuccess()
+        } catch {
+            await throttleStore.registerFailure(reason: String(describing: error))
+            telemetry.retryCount = await throttleStore.retryCount
+            telemetry.lastFailureReason = await throttleStore.failureReason
+            throw error
+        }
 
         if shouldAbort {
             shouldAbort = false
@@ -807,6 +909,8 @@ public actor ChatArchiveBackgroundScheduler {
 
         telemetry.lastRunFinishAt = Date()
         telemetry.lastResult = .started
+        telemetry.retryCount = await throttleStore.retryCount
+        telemetry.lastFailureReason = await throttleStore.failureReason
         return .started
     }
 }

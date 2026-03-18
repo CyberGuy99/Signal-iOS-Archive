@@ -592,6 +592,67 @@ class BackupSettingsStoreTests: XCTestCase {
         let telemetry = await scheduler.telemetry
         XCTAssertEqual(telemetry.lastResult, .aborted)
     }
+
+    func testThrottleLimitPerWindowIsEnforced() async {
+        let policy = ChatArchiveThrottlePolicy(
+            maxRunsPerWindow: 1,
+            windowDuration: 60,
+            baseBackoff: 1,
+            maxBackoff: 8,
+        )
+        let store = ChatArchiveRunThrottleStore(policy: policy)
+
+        XCTAssertTrue(await store.shouldAllowRun(now: Date(timeIntervalSince1970: 100)))
+        await store.registerRunStart(now: Date(timeIntervalSince1970: 100))
+        XCTAssertFalse(await store.shouldAllowRun(now: Date(timeIntervalSince1970: 101)))
+    }
+
+    func testExponentialBackoffIncreasesOnRepeatedFailures() async {
+        let policy = ChatArchiveThrottlePolicy(
+            maxRunsPerWindow: 10,
+            windowDuration: 60,
+            baseBackoff: 1,
+            maxBackoff: 8,
+        )
+        let store = ChatArchiveRunThrottleStore(policy: policy)
+
+        await store.registerFailure(reason: "error1", now: Date(timeIntervalSince1970: 100))
+        XCTAssertEqual(await store.retryCount, 1)
+        XCTAssertFalse(await store.shouldAllowRun(now: Date(timeIntervalSince1970: 100.5)))
+        XCTAssertTrue(await store.shouldAllowRun(now: Date(timeIntervalSince1970: 101.1)))
+
+        await store.registerFailure(reason: "error2", now: Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(await store.retryCount, 2)
+        XCTAssertFalse(await store.shouldAllowRun(now: Date(timeIntervalSince1970: 201.5)))
+        XCTAssertTrue(await store.shouldAllowRun(now: Date(timeIntervalSince1970: 202.1)))
+    }
+
+    func testSchedulerRecordsRetryCountAndFailureReason() async {
+        let scheduler = ChatArchiveBackgroundScheduler(
+            throttleStore: ChatArchiveRunThrottleStore(
+                policy: ChatArchiveThrottlePolicy(
+                    maxRunsPerWindow: 10,
+                    windowDuration: 60,
+                    baseBackoff: 1,
+                    maxBackoff: 8,
+                )
+            )
+        )
+
+        do {
+            _ = try await scheduler.runIfEligible(
+                conditions: ChatArchiveSchedulerConditions(isAppIdle: true, isCharging: true, isLowCpuUsage: true),
+                job: {
+                    throw NSError(domain: "archive", code: 42)
+                }
+            )
+            XCTFail("Expected failure")
+        } catch {
+            let telemetry = await scheduler.telemetry
+            XCTAssertEqual(telemetry.retryCount, 1)
+            XCTAssertNotNil(telemetry.lastFailureReason)
+        }
+    }
 }
 
 // MARK: -
