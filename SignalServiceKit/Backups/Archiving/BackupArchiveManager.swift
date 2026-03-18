@@ -399,6 +399,54 @@ public struct ChatArchiveBenchmarkSuite {
     }
 }
 
+public struct ChatArchiveSecurityChecklist: Equatable {
+    public let noPlaintextAtRest: Bool
+    public let keyScopeValidated: Bool
+    public let wrongKeyBehaviorValidated: Bool
+
+    public var isComplete: Bool {
+        noPlaintextAtRest && keyScopeValidated && wrongKeyBehaviorValidated
+    }
+
+    public init(
+        noPlaintextAtRest: Bool,
+        keyScopeValidated: Bool,
+        wrongKeyBehaviorValidated: Bool,
+    ) {
+        self.noPlaintextAtRest = noPlaintextAtRest
+        self.keyScopeValidated = keyScopeValidated
+        self.wrongKeyBehaviorValidated = wrongKeyBehaviorValidated
+    }
+}
+
+public struct ChatArchiveSecurityValidator {
+    public init() {}
+
+    public func containsKnownPlaintext(
+        encryptedBlob: Data,
+        knownTokens: [String],
+    ) -> Bool {
+        let latin1 = String(data: encryptedBlob, encoding: .isoLatin1) ?? ""
+        return knownTokens.contains { token in
+            !token.isEmpty && latin1.contains(token)
+        }
+    }
+
+    public func validateChecklist(
+        encryptedBlob: Data,
+        knownTokens: [String],
+        keyScopeValidated: Bool,
+        wrongKeyBehaviorValidated: Bool,
+    ) -> ChatArchiveSecurityChecklist {
+        let noPlaintextAtRest = !containsKnownPlaintext(encryptedBlob: encryptedBlob, knownTokens: knownTokens)
+        return ChatArchiveSecurityChecklist(
+            noPlaintextAtRest: noPlaintextAtRest,
+            keyScopeValidated: keyScopeValidated,
+            wrongKeyBehaviorValidated: wrongKeyBehaviorValidated,
+        )
+    }
+}
+
 public protocol ChatArchiveChunkPlanner {
     func planChunks(
         threadId: String,

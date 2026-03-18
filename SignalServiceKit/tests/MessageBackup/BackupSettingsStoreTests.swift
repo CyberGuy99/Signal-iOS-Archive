@@ -734,6 +734,39 @@ class BackupSettingsStoreTests: XCTestCase {
         XCTAssertTrue(csv.contains("chunk_id,original_bytes,compressed_bytes"))
         XCTAssertTrue(csv.contains("thread123_2024_01,1000,500"))
     }
+
+    func testSecurityValidatorDetectsNoPlaintextLeakageForEncryptedPayload() throws {
+        let encryptor = AESGCMChatArchiveEncryption()
+        let key = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x41, count: 32))
+            .archiveKey(for: "thread123_2024_01")
+        let plaintext = Data("super_secret_message_payload".utf8)
+        let encrypted = try encryptor.encrypt(plaintext, key: key)
+
+        let validator = ChatArchiveSecurityValidator()
+        let leaked = validator.containsKnownPlaintext(
+            encryptedBlob: encrypted,
+            knownTokens: ["super_secret_message_payload", "secret_message"]
+        )
+
+        XCTAssertFalse(leaked)
+    }
+
+    func testSecurityChecklistCompletion() throws {
+        let encryptor = AESGCMChatArchiveEncryption()
+        let key = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x42, count: 32))
+            .archiveKey(for: "thread123_2024_01")
+        let encrypted = try encryptor.encrypt(Data("hello".utf8), key: key)
+
+        let checklist = ChatArchiveSecurityValidator().validateChecklist(
+            encryptedBlob: encrypted,
+            knownTokens: ["hello"],
+            keyScopeValidated: true,
+            wrongKeyBehaviorValidated: true,
+        )
+
+        XCTAssertTrue(checklist.noPlaintextAtRest)
+        XCTAssertTrue(checklist.isComplete)
+    }
 }
 
 // MARK: -
