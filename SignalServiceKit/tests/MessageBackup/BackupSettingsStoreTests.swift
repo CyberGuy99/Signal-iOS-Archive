@@ -653,6 +653,52 @@ class BackupSettingsStoreTests: XCTestCase {
             XCTAssertNotNil(telemetry.lastFailureReason)
         }
     }
+
+    func testArchiveRestoreParityEndToEnd() throws {
+        let keyProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x31, count: 32))
+        let harness = ChatArchiveParityHarness(keyProvider: keyProvider)
+
+        let messages = [
+            ArchiveSourceMessage(messageId: "m1", timestampMs: 1_704_067_200_000, text: "hello"),
+            ArchiveSourceMessage(messageId: "m2", timestampMs: 1_704_067_201_000, text: "world"),
+            ArchiveSourceMessage(messageId: "m3", timestampMs: 1_706_745_600_000, text: "from feb"),
+        ]
+
+        let archived = try harness.archive(threadId: "thread123", messages: messages, maxMessagesPerChunk: 2)
+        let restored = try harness.restore(archivedPayloadsByChunkId: archived)
+
+        XCTAssertEqual(restored, messages)
+    }
+
+    func testArchiveRestoreParityAcrossBoundaries() throws {
+        let keyProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x32, count: 32))
+        let harness = ChatArchiveParityHarness(keyProvider: keyProvider)
+
+        let messages = [
+            ArchiveSourceMessage(messageId: "jan-end", timestampMs: 1_706_745_599_000, text: "jan"),
+            ArchiveSourceMessage(messageId: "feb-start", timestampMs: 1_706_745_600_000, text: "feb"),
+        ]
+
+        let archived = try harness.archive(threadId: "thread123", messages: messages, maxMessagesPerChunk: nil)
+        let restored = try harness.restore(archivedPayloadsByChunkId: archived)
+
+        XCTAssertEqual(restored, messages)
+    }
+
+    func testArchiveRestoreFailsWithWrongKey() throws {
+        let goodProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x33, count: 32))
+        let badProvider = DeterministicChatArchiveKeyProvider(rootKeyMaterial: Data(repeating: 0x34, count: 32))
+        let goodHarness = ChatArchiveParityHarness(keyProvider: goodProvider)
+        let badHarness = ChatArchiveParityHarness(keyProvider: badProvider)
+
+        let messages = [
+            ArchiveSourceMessage(messageId: "m1", timestampMs: 1_704_067_200_000, text: "secret")
+        ]
+
+        let archived = try goodHarness.archive(threadId: "thread123", messages: messages, maxMessagesPerChunk: nil)
+
+        XCTAssertThrowsError(try badHarness.restore(archivedPayloadsByChunkId: archived))
+    }
 }
 
 // MARK: -

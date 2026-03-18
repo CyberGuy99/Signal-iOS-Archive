@@ -200,10 +200,94 @@ public class ChatArchiveManagerImpl: ChatArchiveManager {
 public struct ArchiveSourceMessage: Equatable {
     public let messageId: String
     public let timestampMs: UInt64
+    public let text: String
 
-    public init(messageId: String, timestampMs: UInt64) {
+    public init(messageId: String, timestampMs: UInt64, text: String = "") {
         self.messageId = messageId
         self.timestampMs = timestampMs
+        self.text = text
+    }
+}
+
+private struct ArchiveSourceMessagePayload: Codable, Equatable {
+    let schemaVersion: UInt8
+    let messages: [ArchiveSourceMessageCodable]
+
+    init(messages: [ArchiveSourceMessage]) {
+        self.schemaVersion = 1
+        self.messages = messages.map { ArchiveSourceMessageCodable(messageId: $0.messageId, timestampMs: $0.timestampMs, text: $0.text) }
+    }
+}
+
+private struct ArchiveSourceMessageCodable: Codable, Equatable {
+    let messageId: String
+    let timestampMs: UInt64
+    let text: String
+}
+
+public struct ChatArchiveParityHarness {
+    private let planner: ChatArchiveChunkPlanner
+    private let compression: ChatArchiveCompression
+    private let encryption: ChatArchiveEncryption
+    private let keyProvider: ChatArchiveKeyProvider
+
+    public init(
+        planner: ChatArchiveChunkPlanner = MonthlyChatArchiveChunkPlanner(),
+        compression: ChatArchiveCompression = ZstdChatArchiveCompressionAdapter(),
+        encryption: ChatArchiveEncryption = AESGCMChatArchiveEncryption(),
+        keyProvider: ChatArchiveKeyProvider,
+    ) {
+        self.planner = planner
+        self.compression = compression
+        self.encryption = encryption
+        self.keyProvider = keyProvider
+    }
+
+    public func archive(
+        threadId: String,
+        messages: [ArchiveSourceMessage],
+        maxMessagesPerChunk: Int? = 1000,
+    ) throws -> [String: Data] {
+        let chunks = planner.planChunks(threadId: threadId, messages: messages, maxMessagesPerChunk: maxMessagesPerChunk)
+        var payloads = [String: Data]()
+
+        for chunk in chunks {
+            let chunkMessages = messages
+                .filter { $0.timestampMs >= chunk.startTimestampMs && $0.timestampMs <= chunk.endTimestampMs }
+                .sorted {
+                    if $0.timestampMs == $1.timestampMs {
+                        return $0.messageId < $1.messageId
+                    }
+                    return $0.timestampMs < $1.timestampMs
+                }
+
+            let serialized = try JSONEncoder().encode(ArchiveSourceMessagePayload(messages: chunkMessages))
+            let compressed = try compression.compress(data: serialized, level: 3)
+            let encrypted = try encryption.encrypt(compressed, key: keyProvider.archiveKey(for: chunk.chunkId))
+            payloads[chunk.chunkId] = encrypted
+        }
+
+        return payloads
+    }
+
+    public func restore(
+        archivedPayloadsByChunkId: [String: Data],
+    ) throws -> [ArchiveSourceMessage] {
+        var restored = [ArchiveSourceMessage]()
+
+        for (chunkId, encryptedPayload) in archivedPayloadsByChunkId {
+            let decrypted = try encryption.decrypt(encryptedPayload, key: keyProvider.archiveKey(for: chunkId))
+            let serialized = try compression.decompress(data: decrypted)
+            let payload = try JSONDecoder().decode(ArchiveSourceMessagePayload.self, from: serialized)
+            restored.append(contentsOf: payload.messages.map { ArchiveSourceMessage(messageId: $0.messageId, timestampMs: $0.timestampMs, text: $0.text) })
+        }
+
+        return restored.sorted {
+            if $0.timestampMs == $1.timestampMs {
+                return $0.messageId < $1.messageId
+            }
+            return $0.timestampMs < $1.timestampMs
+        }
     }
 }
 
