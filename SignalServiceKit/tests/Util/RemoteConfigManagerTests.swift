@@ -196,4 +196,28 @@ struct ChatArchiveFeatureFlagsTests {
             ) == true
         )
     }
+
+    @Test
+    func rolloutControllerRespectsKillSwitch() {
+        let controller = ChatArchiveRolloutController(
+            stage: .broad(percentage: 100),
+            killSwitchEnabled: true,
+        )
+
+        #expect(controller.isFeatureEnabled(deviceBucket: 0) == false)
+        #expect(controller.isFeatureEnabled(deviceBucket: 50) == false)
+    }
+
+    @Test
+    func rolloutControllerUsesBucketPercentages() {
+        let controller = ChatArchiveRolloutController(
+            stage: .canary(percentage: 5),
+            killSwitchEnabled: false,
+        )
+
+        #expect(controller.isFeatureEnabled(deviceBucket: 0) == true)
+        #expect(controller.isFeatureEnabled(deviceBucket: 4) == true)
+        #expect(controller.isFeatureEnabled(deviceBucket: 5) == false)
+        #expect(controller.isFeatureEnabled(deviceBucket: 50) == false)
+    }
 }

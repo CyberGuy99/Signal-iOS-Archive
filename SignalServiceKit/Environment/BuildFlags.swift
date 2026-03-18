@@ -162,6 +162,39 @@ public enum ChatArchiveFeatureFlags {
     }
 }
 
+public enum ChatArchiveRolloutStage: Equatable {
+    case internalOnly
+    case canary(percentage: Int)
+    case limited(percentage: Int)
+    case broad(percentage: Int)
+
+    var percentage: Int {
+        switch self {
+        case .internalOnly:
+            return 0
+        case .canary(let percentage), .limited(let percentage), .broad(let percentage):
+            return max(0, min(100, percentage))
+        }
+    }
+}
+
+public struct ChatArchiveRolloutController {
+    public let stage: ChatArchiveRolloutStage
+    public let killSwitchEnabled: Bool
+
+    public init(stage: ChatArchiveRolloutStage, killSwitchEnabled: Bool) {
+        self.stage = stage
+        self.killSwitchEnabled = killSwitchEnabled
+    }
+
+    public func isFeatureEnabled(deviceBucket: Int) -> Bool {
+        guard !killSwitchEnabled else { return false }
+        guard ChatArchiveFeatureFlags.isStorageLayerV2Enabled else { return false }
+        let normalizedBucket = max(0, min(99, deviceBucket))
+        return normalizedBucket < stage.percentage
+    }
+}
+
 // MARK: -
 
 /// Flags that we'll leave in the code base indefinitely that are helpful for
